@@ -32,8 +32,10 @@ use Illuminate\Http\Request;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Hash;
 use Mail;
+use App\Services\MailService;
 use Illuminate\Support\Facades\DB;
-
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Carbon;
 class APIsController extends Controller
 {
     
@@ -2608,24 +2610,80 @@ public function blog()
 }
 
 
+// public function registerSubmit(Request $request)
+// {
+//     // ✅ Validation (same style as subscribe)
+//     $this->validate($request, [
+//         'api_key' => 'required',
+//         'full_name' => 'required',
+//         'email' => 'required',
+//         'company_name' => 'required',
+//         'phone' => 'required',
+//         'user_type' => 'required',
+//         'nationality' => 'required',
+//         'password' => 'required|min:6',
+//         'password_confirmation' => 'required|same:password'
+//     ]);
+
+//     // 🔐 API KEY CHECK (BODY la irundhu)
+//     if ($request->api_key == Helper::GeneralWebmasterSettings("api_key")) {
+
+//         // ✅ Save user
+//         $user = new UserRegister();
+//         $user->full_name = $request->full_name;
+//         $user->email = $request->email;
+//         $user->company_name = $request->company_name;
+//         $user->phone = $request->phone;
+//         $user->user_type = $request->user_type;
+//         $user->nationality = $request->nationality;
+//         $user->password = \Hash::make($request->password);
+//         $user->special_requirements = $request->special_requirements;
+//         $user->sponsor_package = $request->sponsor_package;
+//         $user->products_services = $request->products_services;
+//         $user->save();
+
+//         // ✅ Response
+//         return response()->json([
+//             'code' => '1',
+//             'msg' => 'Registration successful'
+//         ], 201);
+
+//     } else {
+//         // ❌ API KEY FAILED
+//         return response()->json([
+//             'code' => '-1',
+//             'msg' => 'Authentication failed'
+//         ], 500);
+//     }
+// }
+
+
+
 public function registerSubmit(Request $request)
 {
-    // ✅ Validation (same style as subscribe)
+    // ✅ Validation
     $this->validate($request, [
         'api_key' => 'required',
         'full_name' => 'required',
-        'email' => 'required',
+        'email' => 'required|email|unique:user_registers,email',
         'company_name' => 'required',
         'phone' => 'required',
         'user_type' => 'required',
         'nationality' => 'required',
-        'password' => 'required|min:6',
-        'password_confirmation' => 'required|same:password'
+        'password' => 'required|min:6|confirmed', // automatically checks password_confirmation
     ]);
 
-    // 🔐 API KEY CHECK (BODY la irundhu)
-    if ($request->api_key == Helper::GeneralWebmasterSettings("api_key")) {
+    // 🔐 API KEY CHECK
+    if ($request->api_key != Helper::GeneralWebmasterSettings("api_key")) {
+        return response()->json([
+            'code' => '-1',
+            'msg'  => 'Authentication failed'
+        ], 401);
+    }
 
+    DB::beginTransaction();
+
+    try {
         // ✅ Save user
         $user = new UserRegister();
         $user->full_name = $request->full_name;
@@ -2634,27 +2692,53 @@ public function registerSubmit(Request $request)
         $user->phone = $request->phone;
         $user->user_type = $request->user_type;
         $user->nationality = $request->nationality;
-        $user->password = \Hash::make($request->password);
-        $user->special_requirements = $request->special_requirements;
-        $user->sponsor_package = $request->sponsor_package;
-        $user->products_services = $request->products_services;
+        $user->password = Hash::make($request->password);
+        $user->special_requirements = $request->special_requirements ?? null;
+        $user->sponsor_package = $request->sponsor_package ?? null;
+        $user->products_services = $request->products_services ?? null;
         $user->save();
 
-        // ✅ Response
+        // 🔗 Generate temporary signed verification link (valid 60 minutes)
+        $verificationLink = URL::temporarySignedRoute(
+            'verification.verify',
+            Carbon::now()->addMinutes(60),
+            ['id' => $user->id, 'hash' => sha1($user->email)]
+        );
+
+        // ✉️ Prepare email template variables
+        $templateVars = [
+            'name'             => $user->full_name,
+            'server_name'      => 'PROFXSUMMIT',
+            'site_link'        => 'https://profxsportsclub.com/',
+            'email'            => $user->email,
+            'verificationUrl'  => $verificationLink,
+        ];
+
+        // ✅ Send verification email
+        $this->mailService->sendEmail(
+            $user->email,
+            'PROFXSUMMIT - Email Verification!',
+            [], // headers
+            'emails.account_verification', // Blade template
+            $templateVars
+        );
+
+        DB::commit();
+
         return response()->json([
             'code' => '1',
-            'msg' => 'Registration successful'
+            'msg'  => 'Registration successful. Please check your email to verify your account.'
         ], 201);
 
-    } else {
-        // ❌ API KEY FAILED
+    } catch (\Exception $e) {
+        DB::rollBack();
+
         return response()->json([
-            'code' => '-1',
-            'msg' => 'Authentication failed'
+            'code' => '-2',
+            'msg'  => 'Registration failed: ' . $e->getMessage()
         ], 500);
     }
 }
-
  public function loginSubmit(Request $request)
     {
         // ✅ Validation
