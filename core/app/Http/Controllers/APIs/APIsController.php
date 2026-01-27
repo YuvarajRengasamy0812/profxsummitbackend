@@ -2665,7 +2665,7 @@ public function registerSubmit(Request $request)
     $this->validate($request, [
         'api_key' => 'required',
         'full_name' => 'required',
-        'email' => 'required|email|unique:user_registers,email',
+       'email' => 'required|email|unique:user_register,email',
         'company_name' => 'required',
         'phone' => 'required',
         'user_type' => 'required',
