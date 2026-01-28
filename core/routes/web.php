@@ -7,6 +7,7 @@ use App\Http\Controllers\RoyController;
 use App\Http\Controllers\LanguageController;
 use App\Http\Controllers\SiteMapController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\APIs\APIsController;
 
 
 /*
@@ -20,7 +21,9 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-
+// Download Ticket
+Route::get('ticket/download/{user}', [APIsController::class, 'downloadTicket'])->name('ticket.download');
+// 
 Route::get('/', [DashboardController::class, 'index'])->name('adminHome');
 
 // Language Route

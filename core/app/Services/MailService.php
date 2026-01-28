@@ -19,27 +19,23 @@ class MailService
             'timeout'  => 10.0,
         ]);
 
-        $this->apiKey       = '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';
-        $this->senderName   = 'PROFXSUMMIT';
+        $this->apiKey       = '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';
+        $this->senderName   = 'PROFX Summit';
         $this->senderEmail  = 'info@profxmedia.com';
     }
-   
+
     /**
-     * Send email via Brevo
+     * Send email via Brevo API
      *
      * @param string $toEmail
      * @param string $subject
-     * @param array $headers (ignored by Brevo)
-     * @param string|null $templateFile
-     * @param array $data
+     * @param string $template Blade template file name, e.g., 'emails.template'
+     * @param array $data Data to pass to the template
      * @return array
      */
- 
-
-        public function sendEmail($toEmail, $subject, $headers = [], $templateFile = null, $data = [])
+    public function sendEmail($toEmail, $subject, $template = 'emails.template', $data = [])
     {
-        $templateFile = $templateFile ?: 'emails.raw'; // default template
-        $htmlContent = view($templateFile, $data)->render();
+        $htmlContent = view($template, $data)->render();
 
         $payload = [
             'sender' => [
@@ -63,6 +59,7 @@ class MailService
             ]);
 
             return json_decode($response->getBody(), true);
+
         } catch (\Exception $e) {
             Log::error('Brevo API Error: ' . $e->getMessage());
             return [
@@ -72,11 +69,3 @@ class MailService
         }
     }
 }
-
-
-
-
-
-
-
-
