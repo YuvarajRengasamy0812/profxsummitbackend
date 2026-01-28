@@ -33,6 +33,10 @@ use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Hash;
 use Mail;
 use Illuminate\Support\Facades\DB;
+use App\Services\MailService;
+use Milon\Barcode\DNS1D; // make sure you installed milon/barcode via composer
+use Illuminate\Support\Facades\Storage;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class APIsController extends Controller
 {
@@ -2608,13 +2612,75 @@ public function blog()
 }
 
 
+// public function registerSubmit(Request $request)
+// {
+//     $this->validate($request, [
+//         'api_key' => 'required',
+//         'full_name' => 'required',
+//         'email' => 'required',
+//         'company_name' => 'required',
+//         'phone' => 'required',
+//         'user_type' => 'required',
+//         'nationality' => 'required',
+//         'password' => 'required|min:6',
+//         'password_confirmation' => 'required|same:password'
+//     ]);
+
+//     if ($request->api_key == Helper::GeneralWebmasterSettings("api_key")) {
+
+//         // ✅ Save user
+//         $user = new UserRegister();
+//         $user->full_name = $request->full_name;
+//         $user->email = $request->email;
+//         $user->company_name = $request->company_name;
+//         $user->phone = $request->phone;
+//         $user->user_type = $request->user_type;
+//         $user->nationality = $request->nationality;
+//         $user->password = \Hash::make($request->password);
+//         $user->special_requirements = $request->special_requirements;
+//         $user->sponsor_package = $request->sponsor_package;
+//         $user->products_services = $request->products_services;
+//         $user->save();
+
+//         return response()->json([
+//             'code' => '1',
+//             'msg' => 'Registration successful'
+//         ], 201);
+
+//     } else {
+//         return response()->json([
+//             'code' => '-1',
+//             'msg' => 'Authentication failed'
+//         ], 500);
+//     }
+// }
+
+
+public function downloadTicket(UserRegister $user)
+{
+    // Generate Barcode for PDF
+    $generator = new \Milon\Barcode\DNS1D();
+    $barcodePNG = $generator->getBarcodePNG($user->email, 'C128');
+    $barcodeBase64 = 'data:image/png;base64,' . $barcodePNG;
+
+    $pdf = Pdf::loadView('emails.ticket-pdf', [
+        'user' => $user,
+        'barcodeBase64' => $barcodeBase64,
+        'ticket_header' => 'https://profxsummit.com/assets/images/ticket-header.png',
+        'ticket_footer' => 'https://profxsummit.com/assets/images/ticket-footer.png',
+    ]);
+
+    return $pdf->download("ticket-{$user->id}.pdf");
+}
+
+
 public function registerSubmit(Request $request)
 {
-    // ✅ Validation (same style as subscribe)
+    // ✅ Validation
     $this->validate($request, [
         'api_key' => 'required',
         'full_name' => 'required',
-        'email' => 'required',
+        'email' => 'required|email',
         'company_name' => 'required',
         'phone' => 'required',
         'user_type' => 'required',
@@ -2623,37 +2689,82 @@ public function registerSubmit(Request $request)
         'password_confirmation' => 'required|same:password'
     ]);
 
-    // 🔐 API KEY CHECK (BODY la irundhu)
-    if ($request->api_key == Helper::GeneralWebmasterSettings("api_key")) {
-
-        // ✅ Save user
-        $user = new UserRegister();
-        $user->full_name = $request->full_name;
-        $user->email = $request->email;
-        $user->company_name = $request->company_name;
-        $user->phone = $request->phone;
-        $user->user_type = $request->user_type;
-        $user->nationality = $request->nationality;
-        $user->password = \Hash::make($request->password);
-        $user->special_requirements = $request->special_requirements;
-        $user->sponsor_package = $request->sponsor_package;
-        $user->products_services = $request->products_services;
-        $user->save();
-
-        // ✅ Response
-        return response()->json([
-            'code' => '1',
-            'msg' => 'Registration successful'
-        ], 201);
-
-    } else {
-        // ❌ API KEY FAILED
+    // 🔐 API KEY CHECK
+    if ($request->api_key != Helper::GeneralWebmasterSettings("api_key")) {
         return response()->json([
             'code' => '-1',
             'msg' => 'Authentication failed'
         ], 500);
     }
+
+    // ✅ Save user
+    $user = new UserRegister();
+    $user->full_name = $request->full_name;
+    $user->email = $request->email;
+    $user->company_name = $request->company_name;
+    $user->phone = $request->phone;
+    $user->user_type = $request->user_type;
+    $user->nationality = $request->nationality;
+    $user->password = \Hash::make($request->password);
+    $user->special_requirements = $request->special_requirements;
+    $user->sponsor_package = $request->sponsor_package;
+    $user->products_services = $request->products_services;
+    $user->save();
+
+    // Barcode generation
+try {
+    $generator = new DNS1D();
+    $barcodePNG = $generator->getBarcodePNG($user->email, 'C128');
+    $barcodeBase64 = 'data:image/png;base64,' . $barcodePNG;
+
+    // Use download route instead of a static URL
+    $downloadTicketUrl = route('ticket.download', $user->id);
+
+} catch (\Exception $e) {
+    \Log::error('Barcode generation failed: ' . $e->getMessage());
+    $barcodeBase64 = null;
+    $downloadTicketUrl = null;
 }
+
+
+    // ✅ Send registration email via Brevo API
+    try {
+        $mailService = new MailService();
+
+        $mailData = [
+            'title'             => 'Welcome to PROFX Summit Dubai 2026',
+            'details'           => "Hi {$user->full_name},<br><br>Thank you for registering for PROFX Summit Dubai 2026.<br>You can now login with your email.<br><br>Regards,<br>PROFX Team",
+            'logo'              => 'https://profxsummit.com/assets/images/logo/profx-dark.png',
+            'ticket_header'     => 'https://profxsummit.com/assets/images/ticket-header.png',
+            'ticket_footer'     => 'https://profxsummit.com/assets/images/ticket-footer.png',
+            'barcodeBase64'     => $barcodeBase64,
+            'downloadTicketUrl' => $downloadTicketUrl,
+        ];
+
+        $result = $mailService->sendEmail(
+            $user->email,
+            'Registration Successful - PROFX Summit',
+            'emails.registration', // Blade template
+            $mailData
+        );
+
+        \Log::info('Brevo Mail Response', $result);
+
+        if (isset($result['error'])) {
+            \Log::error('Failed to send registration email: ' . $result['message']);
+        }
+
+    } catch (\Exception $e) {
+        \Log::error('Exception sending registration email: ' . $e->getMessage());
+    }
+
+    // ✅ Response
+    return response()->json([
+        'code' => '1',
+        'msg'  => 'Registration successful'
+    ], 201);
+}
+
 
  public function loginSubmit(Request $request)
     {
